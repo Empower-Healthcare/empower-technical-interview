@@ -10,6 +10,9 @@ __pycache__/
 # Go
 /bin/
 
+# Amp orb runtime state (portal URLs written by `amp orb services ensure`).
+.amp/portals/
+
 # Editors / OS
 .idea/
 .vscode/
