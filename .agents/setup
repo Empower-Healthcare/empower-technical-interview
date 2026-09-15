@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Pinned host tooling for the ParcelLab development stack. Amp may run this
+# script more than once, so each installation is safe to repeat.
+GO_VERSION="1.27.1"
+GO_SHA256="63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445"
+UV_VERSION="0.12.9"
+UV_SHA256="ec7a99cd05e0cd7f80243f135ce1361c76835cb0ee60055d14d20eba8eba1460"
+PROTOC_VERSION="36.1"
+PROTOC_SHA256="c4bc672d9d49214dc8cafdceadf4df92182d6ca8e3ec65a56b2d7de5602669b4"
+PROTOC_GEN_GO_VERSION="v1.36.12"
+PROTOC_GEN_GO_GRPC_VERSION="v1.6.2"
+GRPCURL_VERSION="1.9.4"
+GRPCURL_SHA256="97e13d58d2733a0e62cd2571d1d5f0c02823f0d25282f08bddedf1ad9c5d1736"
+DOCKER_VERSION="5:29.8.0-1~debian.12~bookworm"
+CONTAINERD_VERSION="2.3.5-1~debian.12~bookworm"
+BUILDX_VERSION="0.37.1-1~debian.12~bookworm"
+COMPOSE_VERSION="5.5.1-1~debian.12~bookworm"
+
+export PATH="/usr/local/go/bin:/usr/local/bin:${PATH}"
+
+require_amd64_debian_12() {
+  if [[ "$(dpkg --print-architecture)" != "amd64" ]]; then
+    echo "Unsupported architecture: ParcelLab's pinned binary artifacts require amd64." >&2
+    exit 1
+  fi
+
+  # shellcheck disable=SC1091
+  source /etc/os-release
+  if [[ "${ID:-}" != "debian" || "${VERSION_CODENAME:-}" != "bookworm" ]]; then
+    echo "Unsupported OS: Docker package pins target Debian 12 (bookworm)." >&2
+    exit 1
+  fi
+}
+
+apt_install_base_tools() {
+  local packages=(ca-certificates curl git gnupg jq make python3 python3-venv unzip)
+  local missing=()
+  local package
+
+  for package in "${packages[@]}"; do
+    dpkg-query -W -f='${Status}' "${package}" 2>/dev/null | grep -q 'install ok installed' || missing+=("${package}")
+  done
+
+  if ((${#missing[@]})); then
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
+  fi
+}
+
+install_go() {
+  if ! command -v go >/dev/null 2>&1 || [[ "$(go env GOVERSION)" != "go${GO_VERSION}" ]]; then
+    local archive
+    archive="$(mktemp)"
+    curl --fail --silent --show-error --location \
+      "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -o "${archive}"
+    echo "${GO_SHA256}  ${archive}" | sha256sum --check --status
+    sudo rm -rf /usr/local/go
+    sudo tar -C /usr/local -xzf "${archive}"
+    rm -f "${archive}"
+  fi
+
+  sudo ln -sfn /usr/local/go/bin/go /usr/local/bin/go
+  sudo ln -sfn /usr/local/go/bin/gofmt /usr/local/bin/gofmt
+}
+
+install_uv() {
+  if command -v uv >/dev/null 2>&1 && [[ "$(uv --version)" == "uv ${UV_VERSION} "* ]]; then
+    return
+  fi
+
+  local archive unpack_dir
+  archive="$(mktemp)"
+  unpack_dir="$(mktemp -d)"
+  curl --fail --silent --show-error --location \
+    "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/uv-x86_64-unknown-linux-gnu.tar.gz" \
+    -o "${archive}"
+  echo "${UV_SHA256}  ${archive}" | sha256sum --check --status
+  tar -C "${unpack_dir}" -xzf "${archive}"
+  sudo install -m 0755 "${unpack_dir}/uv-x86_64-unknown-linux-gnu/uv" /usr/local/bin/uv
+  sudo install -m 0755 "${unpack_dir}/uv-x86_64-unknown-linux-gnu/uvx" /usr/local/bin/uvx
+  rm -rf "${archive}" "${unpack_dir}"
+}
+
+install_protoc() {
+  if command -v protoc >/dev/null 2>&1 && [[ "$(protoc --version)" == "libprotoc ${PROTOC_VERSION}" ]]; then
+    return
+  fi
+
+  local archive unpack_dir
+  archive="$(mktemp)"
+  unpack_dir="$(mktemp -d)"
+  curl --fail --silent --show-error --location \
+    "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip" \
+    -o "${archive}"
+  echo "${PROTOC_SHA256}  ${archive}" | sha256sum --check --status
+  unzip -q "${archive}" -d "${unpack_dir}"
+  sudo install -m 0755 "${unpack_dir}/bin/protoc" /usr/local/bin/protoc
+  sudo cp -a "${unpack_dir}/include/." /usr/local/include/
+  rm -rf "${archive}" "${unpack_dir}"
+}
+
+install_go_binary() {
+  local binary="$1"
+  local version="$2"
+  local module="$3"
+
+  if command -v "${binary}" >/dev/null 2>&1 && "${binary}" --version 2>&1 | grep -Fq "${version#v}"; then
+    return
+  fi
+
+  sudo env PATH="${PATH}" GOBIN=/usr/local/bin \
+    go install "${module}@${version}"
+}
+
+install_grpcurl() {
+  if command -v grpcurl >/dev/null 2>&1 && grpcurl --version 2>&1 | grep -Fq "${GRPCURL_VERSION}"; then
+    return
+  fi
+
+  local archive unpack_dir
+  archive="$(mktemp)"
+  unpack_dir="$(mktemp -d)"
+  curl --fail --silent --show-error --location \
+    "https://github.com/fullstorydev/grpcurl/releases/download/v${GRPCURL_VERSION}/grpcurl_${GRPCURL_VERSION}_linux_x86_64.tar.gz" \
+    -o "${archive}"
+  echo "${GRPCURL_SHA256}  ${archive}" | sha256sum --check --status
+  tar -C "${unpack_dir}" -xzf "${archive}"
+  sudo install -m 0755 "${unpack_dir}/grpcurl" /usr/local/bin/grpcurl
+  rm -rf "${archive}" "${unpack_dir}"
+}
+
+install_docker() {
+  sudo install -m 0755 -d /etc/apt/keyrings
+  if [[ ! -s /etc/apt/keyrings/docker.asc ]]; then
+    sudo curl --fail --silent --show-error --location \
+      https://download.docker.com/linux/debian/gpg \
+      -o /etc/apt/keyrings/docker.asc
+    sudo chmod a+r /etc/apt/keyrings/docker.asc
+  fi
+
+  local repository
+  repository="deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable"
+  if [[ ! -f /etc/apt/sources.list.d/docker.list ]] || ! grep -Fxq "${repository}" /etc/apt/sources.list.d/docker.list; then
+    echo "${repository}" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+  fi
+
+  local expected=(
+    "docker-ce=${DOCKER_VERSION}"
+    "docker-ce-cli=${DOCKER_VERSION}"
+    "containerd.io=${CONTAINERD_VERSION}"
+    "docker-buildx-plugin=${BUILDX_VERSION}"
+    "docker-compose-plugin=${COMPOSE_VERSION}"
+  )
+  local spec package wanted installed needs_install=0
+  for spec in "${expected[@]}"; do
+    package="${spec%%=*}"
+    wanted="${spec#*=}"
+    installed="$(dpkg-query -W -f='${Version}' "${package}" 2>/dev/null || true)"
+    [[ "${installed}" == "${wanted}" ]] || needs_install=1
+  done
+
+  if ((needs_install)); then
+    sudo apt-get update
+    sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      --allow-downgrades "${expected[@]}"
+  fi
+}
+
+warm_project_dependencies() {
+  if [[ -f go.mod ]]; then
+    go mod download
+  fi
+  if [[ -f uv.lock ]]; then
+    uv sync --frozen
+  fi
+}
+
+verify_tools() {
+  local tools=(go python3 uv docker make protoc protoc-gen-go protoc-gen-go-grpc grpcurl git curl jq unzip)
+  local tool
+  for tool in "${tools[@]}"; do
+    command -v "${tool}" >/dev/null
+  done
+  docker compose version >/dev/null
+  docker buildx version >/dev/null
+}
+
+require_amd64_debian_12
+apt_install_base_tools
+install_go
+install_uv
+install_protoc
+install_go_binary protoc-gen-go "${PROTOC_GEN_GO_VERSION}" google.golang.org/protobuf/cmd/protoc-gen-go
+install_go_binary protoc-gen-go-grpc "${PROTOC_GEN_GO_GRPC_VERSION}" google.golang.org/grpc/cmd/protoc-gen-go-grpc
+install_grpcurl
+install_docker
+warm_project_dependencies
+verify_tools
+
+echo "ParcelLab Orb tooling is ready. The supervised Docker daemon starts from .agents/resume."

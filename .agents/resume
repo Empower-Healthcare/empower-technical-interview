@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Docker is infrastructure for Docker Compose, not an application startup path.
+# Amp runs this hook after activation and every wake; ensure is idempotent and
+# repairs the supervised daemon if an orb pause stopped it.
+if command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
+  mkdir -p "${HOME}/.cache/amp/logs"
+  amp orb services ensure >"${HOME}/.cache/amp/logs/docker-daemon.log" 2>&1
+fi

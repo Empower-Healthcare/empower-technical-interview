@@ -1,0 +1,3 @@
+services:
+  docker-daemon:
+    command: exec sudo dockerd --host=unix:///var/run/docker.sock --group="$(id -gn)"
