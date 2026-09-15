@@ -1,0 +1,233 @@
+# ParcelLab local stack. `make up` (docker compose up -d --build) starts
+# everything below; there are no optional profiles for required services.
+#
+# Local simplifications, deliberately not production settings:
+#   - every published port binds to 127.0.0.1 only
+#   - PostgreSQL and Kafka use PLAINTEXT connections and development credentials
+#     (the credentials appear here in the clear; they are not secrets)
+#   - one Kafka broker in KRaft mode, replication factor 1
+#
+# Inside the network, services reach each other by service name (postgres,
+# kafka, pricing, ...). "localhost" inside a container is that container.
+#
+# Host ports clash with something on your laptop? `make up` runs
+# `go run ./tools/ports` first, which swaps a busy port for a free one and
+# records it in .env (`make ports` previews this). Container-side ports never
+# change. Podman: `podman compose` with the docker-compose provider (see README).
+
+name: parcellab
+
+x-go-service: &go-service
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: parcellab/go:local
+  restart: unless-stopped
+  environment: &go-env
+    DATABASE_URL: postgres://parcellab:parcellab_dev_password@postgres:5432/parcellab?sslmode=disable
+    KAFKA_BROKERS: kafka:9092
+    LOG_LEVEL: info
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: parcellab
+      POSTGRES_USER: parcellab
+      POSTGRES_PASSWORD: parcellab_dev_password # development only
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parcellab -d parcellab"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # One-shot: applies db/migrations, then exits 0. Application services wait
+  # for it to complete successfully.
+  migrate:
+    <<: *go-service
+    command: ["migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pricing:
+    build:
+      context: ./pricing
+    image: parcellab/pricing:local
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: INFO
+      # Failure-scenario knob: e.g. 5000 makes every quote slower than the Go
+      # service's PRICING_TIMEOUT, so CreateShipment fails with DEADLINE_EXCEEDED.
+      PRICING_ARTIFICIAL_DELAY_MS: ${PRICING_ARTIFICIAL_DELAY_MS:-0}
+    ports:
+      - "127.0.0.1:${PRICING_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  shipment-service:
+    <<: *go-service
+    command: ["shipment-service"]
+    environment:
+      <<: *go-env
+      GRPC_ADDR: ":50051"
+      MGMT_ADDR: ":8080"
+      PRICING_URL: http://pricing:8000
+      PRICING_TIMEOUT: 2s
+    ports:
+      - "127.0.0.1:${GRPC_PORT:-50051}:50051" # gRPC
+      - "127.0.0.1:${SHIPMENT_MGMT_PORT:-8080}:8080" # health + metrics
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      pricing:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/readyz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  outbox-relay:
+    <<: *go-service
+    command: ["outbox-relay"]
+    environment:
+      <<: *go-env
+      MGMT_ADDR: ":8080"
+      RELAY_POLL_INTERVAL: 500ms
+      RELAY_BATCH_SIZE: "100"
+      RELAY_PUBLISH_TIMEOUT: 10s
+    ports:
+      - "127.0.0.1:${RELAY_MGMT_PORT:-8081}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+
+  dispatch-consumer:
+    <<: *go-service
+    command: ["dispatch-consumer"]
+    environment:
+      <<: *go-env
+      MGMT_ADDR: ":8080"
+      CONSUMER_RECORD_TIMEOUT: 15s
+      CONSUMER_MAX_ATTEMPTS: "5"
+      CONSUMER_BACKOFF: 500ms
+    ports:
+      - "127.0.0.1:${CONSUMER_MGMT_PORT:-8082}:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      kafka-init:
+        condition: service_completed_successfully
+
+  kafka:
+    image: apache/kafka:4.3.1
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      # INTERNAL is what containers use; HOST is published to the laptop so
+      # host tools can connect to 127.0.0.1:19092.
+      KAFKA_LISTENERS: INTERNAL://:9092,HOST://:19092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,HOST://127.0.0.1:${KAFKA_HOST_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false" # topics are created explicitly by kafka-init
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      CLUSTER_ID: ParcelLabLocalKRaftCluster
+    ports:
+      - "127.0.0.1:${KAFKA_HOST_PORT:-19092}:19092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092 >/dev/null 2>&1"]
+      interval: 3s
+      timeout: 10s
+      retries: 30
+      start_period: 10s
+
+  # One-shot: creates shipment.created.v1 (3 partitions, RF 1) and exits.
+  kafka-init:
+    image: apache/kafka:4.3.1
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists \
+          --topic shipment.created.v1 --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --describe --topic shipment.created.v1
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:v1.5.0
+    restart: unless-stopped
+    environment:
+      KAFKA_CLUSTERS_0_NAME: parcellab-local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      DYNAMIC_CONFIG_ENABLED: "false"
+    ports:
+      - "127.0.0.1:${KAFKA_UI_PORT:-8085}:8080"
+    depends_on:
+      kafka:
+        condition: service_healthy
+
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=1d
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  # Tools (profile "tools"): one-shots run by `make smoke` / `make replay`.
+  # They are not part of `make up`; the required stack above has no profiles.
+  smoke:
+    <<: *go-service
+    command: ["smoke"]
+    restart: "no"
+    profiles: ["tools"]
+    environment:
+      <<: *go-env
+      SHIPMENT_GRPC_ADDR: shipment-service:50051
+      SHIPMENT_MGMT_URL: http://shipment-service:8080
+      RELAY_MGMT_URL: http://outbox-relay:8080
+      CONSUMER_MGMT_URL: http://dispatch-consumer:8080
+      PRICING_URL: http://pricing:8000
+      PROMETHEUS_URL: http://prometheus:9090
+      SMOKE_STEP_TIMEOUT: 45s
+
+  replay:
+    <<: *go-service
+    # entrypoint (not command) so `docker compose run replay <event_id>` appends the ID.
+    entrypoint: ["replay"]
+    command: []
+    restart: "no"
+    profiles: ["tools"]
+
+volumes:
+  postgres-data:
+  kafka-data:
+  prometheus-data:

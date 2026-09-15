@@ -1,0 +1,20 @@
+# Interviewer-only material. NOTE: ignoring is not enough for distribution;
+# archives and folder copies must exclude this directory explicitly.
+.interviewer/
+
+# Python
+pricing/.venv/
+__pycache__/
+.pytest_cache/
+
+# Go
+/bin/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+.env
+
+# Keep the port-override template even where a broader .env* exclude exists.
+!.env.example

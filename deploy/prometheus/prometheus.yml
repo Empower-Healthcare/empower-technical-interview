@@ -1,0 +1,22 @@
+# Prometheus scrapes the management HTTP endpoint of every ParcelLab process.
+# Container DNS names come from docker-compose.yml.
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+
+scrape_configs:
+  - job_name: shipment-service
+    static_configs:
+      - targets: ["shipment-service:8080"]
+  - job_name: outbox-relay
+    static_configs:
+      - targets: ["outbox-relay:8080"]
+  - job_name: dispatch-consumer
+    static_configs:
+      - targets: ["dispatch-consumer:8080"]
+  - job_name: pricing
+    static_configs:
+      - targets: ["pricing:8000"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

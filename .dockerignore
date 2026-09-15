@@ -1,0 +1,9 @@
+.git
+.interviewer
+.amp
+.agents
+pricing/.venv
+**/__pycache__
+docs
+README.md
+bin

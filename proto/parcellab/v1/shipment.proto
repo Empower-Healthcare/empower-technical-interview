@@ -1,0 +1,107 @@
+syntax = "proto3";
+
+// ParcelLab shipment API.
+//
+// This is the business contract for the Go shipment service. It is served over
+// gRPC; the management HTTP endpoint (health, metrics) is separate and is not a
+// REST alternative to this API.
+//
+// Regenerate the Go bindings with `make generate` after editing this file.
+package parcellab.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/empower-healthcare/parcellab/gen/parcellab/v1;parcellabv1";
+
+service ShipmentService {
+  // GetQuote validates the parcel and returns a price from the pricing service.
+  //
+  // Status codes: INVALID_ARGUMENT for bad input, UNAVAILABLE when the pricing
+  // service cannot be reached, DEADLINE_EXCEEDED when the caller's deadline
+  // (or the bounded downstream timeout) elapses.
+  rpc GetQuote(GetQuoteRequest) returns (GetQuoteResponse);
+
+  // CreateShipment obtains a quote and stores the shipment together with a
+  // pending `shipment.created` outbox event in one database transaction.
+  //
+  // The response is returned as soon as that transaction commits. Dispatch
+  // happens asynchronously through Kafka; poll GetShipment to observe it.
+  //
+  // CreateShipment is NOT idempotent: a client retry creates a second shipment.
+  rpc CreateShipment(CreateShipmentRequest) returns (CreateShipmentResponse);
+
+  // GetShipment returns the stored shipment plus its outbox and dispatch state.
+  //
+  // Status codes: NOT_FOUND when the shipment does not exist.
+  rpc GetShipment(GetShipmentRequest) returns (GetShipmentResponse);
+}
+
+message GetQuoteRequest {
+  // Parcel weight in grams. Must be between 1 and 30000 inclusive.
+  int32 weight_grams = 1;
+}
+
+message GetQuoteResponse {
+  Money price = 1;
+}
+
+message CreateShipmentRequest {
+  // Parcel weight in grams. Must be between 1 and 30000 inclusive.
+  int32 weight_grams = 1;
+}
+
+message CreateShipmentResponse {
+  Shipment shipment = 1;
+}
+
+message GetShipmentRequest {
+  string shipment_id = 1;
+}
+
+message GetShipmentResponse {
+  Shipment shipment = 1;
+}
+
+// Money is an integer amount in the smallest unit of the currency (cents).
+message Money {
+  int64 amount_cents = 1;
+  // ISO 4217 code, e.g. "USD".
+  string currency = 2;
+}
+
+message Shipment {
+  string shipment_id = 1;
+  int32 weight_grams = 2;
+  Money price = 3;
+  google.protobuf.Timestamp created_at = 4;
+
+  // State of the `shipment.created` outbox event for this shipment.
+  OutboxStatus outbox_status = 5;
+  // State of the asynchronous dispatch produced by the Kafka consumer.
+  Dispatch dispatch = 6;
+}
+
+enum OutboxStatus {
+  OUTBOX_STATUS_UNSPECIFIED = 0;
+  // Event stored, not yet acknowledged by Kafka.
+  OUTBOX_STATUS_PENDING = 1;
+  // Event acknowledged by Kafka and marked published by the relay.
+  OUTBOX_STATUS_PUBLISHED = 2;
+}
+
+enum DispatchStatus {
+  DISPATCH_STATUS_UNSPECIFIED = 0;
+  // No dispatch record exists yet; the event has not been consumed.
+  DISPATCH_STATUS_PENDING = 1;
+  // The consumer persisted exactly one dispatch record for this shipment.
+  DISPATCH_STATUS_DISPATCHED = 2;
+}
+
+message Dispatch {
+  DispatchStatus status = 1;
+  // Populated only when status is DISPATCHED.
+  string dispatch_id = 2;
+  google.protobuf.Timestamp dispatched_at = 3;
+  // The event ID that produced the dispatch record.
+  string event_id = 4;
+}

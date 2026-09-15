@@ -172,8 +172,8 @@ warm_project_dependencies() {
   if [[ -f go.mod ]]; then
     go mod download
   fi
-  if [[ -f uv.lock ]]; then
-    uv sync --frozen
+  if [[ -f pricing/uv.lock ]]; then
+    (cd pricing && uv sync --frozen)
   fi
 }
 
