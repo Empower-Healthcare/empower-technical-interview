@@ -20,11 +20,27 @@ from app import pricing
     ],
 )
 def test_standard_price(weight_grams: int, expected_cents: int) -> None:
-    money = pricing.quote(weight_grams)
+    money = pricing.quote(weight_grams, pricing.DeliverySpeed.STANDARD)
+    assert money == pricing.Money(amount_cents=expected_cents, currency="USD")
+
+
+@pytest.mark.parametrize(
+    ("weight_grams", "expected_cents"),
+    [
+        (1, 1100),  # 500 + 1 started kg + 500 express
+        (1000, 1100),
+        (1001, 1200),
+        (1500, 1200),  # 700 standard + 500
+        (30_000, 4000),  # 500 + 30 * 100 + 500
+    ],
+)
+def test_express_price(weight_grams: int, expected_cents: int) -> None:
+    money = pricing.quote(weight_grams, pricing.DeliverySpeed.EXPRESS)
     assert money == pricing.Money(amount_cents=expected_cents, currency="USD")
 
 
 @pytest.mark.parametrize("weight_grams", [0, -1, 30_001, 1_000_000])
-def test_out_of_range_weight_is_rejected(weight_grams: int) -> None:
+@pytest.mark.parametrize("speed", list(pricing.DeliverySpeed))
+def test_out_of_range_weight_is_rejected(weight_grams: int, speed: pricing.DeliverySpeed) -> None:
     with pytest.raises(pricing.InvalidWeight):
-        pricing.quote(weight_grams)
+        pricing.quote(weight_grams, speed)

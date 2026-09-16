@@ -33,6 +33,18 @@ func ValidateWeight(weightGrams int32) error {
 	return nil
 }
 
+// DeliverySpeed selects the pricing rule. The zero value is not a valid speed:
+// the API layer maps an unset field to standard, not the domain.
+type DeliverySpeed uint8
+
+const (
+	DeliveryStandard DeliverySpeed = iota + 1 // 500 cents plus 100 cents per started kilogram
+	DeliveryExpress                           // standard price plus 500 cents
+)
+
+// ErrInvalidDeliverySpeed is returned for a delivery speed the platform does not offer.
+var ErrInvalidDeliverySpeed = errors.New("unsupported delivery_speed")
+
 // Identifiers are distinct types so a shipment ID cannot be passed where an
 // event ID is expected. Their string form is "<prefix>_<16 hex chars>".
 type (

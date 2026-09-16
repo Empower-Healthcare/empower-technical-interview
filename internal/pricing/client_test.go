@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/empower-healthcare/parcellab/internal/correlation"
+	"github.com/empower-healthcare/parcellab/internal/domain"
 )
 
 func newTestClient(t *testing.T, url string, timeout time.Duration) (*Client, Metrics) {
@@ -35,7 +36,7 @@ func TestQuoteSuccessForwardsCorrelationID(t *testing.T) {
 
 	client, metrics := newTestClient(t, srv.URL, time.Second)
 	ctx := correlation.WithID(t.Context(), "req_test_1")
-	money, err := client.Quote(ctx, 1500)
+	money, err := client.Quote(ctx, 1500, domain.DeliveryStandard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,11 +46,61 @@ func TestQuoteSuccessForwardsCorrelationID(t *testing.T) {
 	if gotHeader != "req_test_1" {
 		t.Fatalf("correlation header not forwarded, got %q", gotHeader)
 	}
-	if gotBody["weight_grams"] != float64(1500) {
+	if gotBody["weight_grams"] != float64(1500) || gotBody["delivery_speed"] != "standard" {
 		t.Fatalf("unexpected request body %v", gotBody)
 	}
 	if n := testutil.ToFloat64(metrics.requests.WithLabelValues(string(outcomeOK))); n != 1 {
 		t.Fatalf("ok counter = %v, want 1", n)
+	}
+}
+
+// TestQuoteSendsDeliverySpeed: wire values match pricing/app/pricing.py, and
+// standard is sent, not omitted.
+func TestQuoteSendsDeliverySpeed(t *testing.T) {
+	cases := []struct {
+		speed    domain.DeliverySpeed
+		wantWire string
+	}{
+		{speed: domain.DeliveryStandard, wantWire: "standard"},
+		{speed: domain.DeliveryExpress, wantWire: "express"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.wantWire, func(sub *testing.T) {
+			var gotBody map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				_, _ = w.Write([]byte(`{"amount_cents":1200,"currency":"USD"}`))
+			}))
+			defer srv.Close()
+
+			client, _ := newTestClient(sub, srv.URL, time.Second)
+			if _, err := client.Quote(sub.Context(), 1500, tc.speed); err != nil {
+				sub.Fatal(err)
+			}
+			if gotBody["delivery_speed"] != tc.wantWire {
+				sub.Fatalf("delivery_speed = %v, want %q", gotBody["delivery_speed"], tc.wantWire)
+			}
+		})
+	}
+}
+
+// TestQuoteUnsupportedSpeedIsNotSent: an invalid speed is a caller bug. It is
+// not sent and not counted.
+func TestQuoteUnsupportedSpeedIsNotSent(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { calls++ }))
+	defer srv.Close()
+
+	client, metrics := newTestClient(t, srv.URL, time.Second)
+	_, err := client.Quote(t.Context(), 1500, 0)
+	if !errors.Is(err, domain.ErrInvalidDeliverySpeed) {
+		t.Fatalf("want ErrInvalidDeliverySpeed, got %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("pricing service was called %d times", calls)
+	}
+	if n := testutil.CollectAndCount(metrics.requests); n != 0 {
+		t.Fatalf("no request outcome may be recorded, got %d series", n)
 	}
 }
 
@@ -63,7 +114,7 @@ func TestQuoteTimesOutWithinBound(t *testing.T) {
 
 	client, metrics := newTestClient(t, srv.URL, 50*time.Millisecond)
 	start := time.Now()
-	_, err := client.Quote(t.Context(), 1500)
+	_, err := client.Quote(t.Context(), 1500, domain.DeliveryStandard)
 	if !errors.Is(err, ErrTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want ErrTimeout wrapping context.DeadlineExceeded, got %v", err)
 	}
@@ -91,7 +142,7 @@ func TestQuoteTimesOutReadingBody(t *testing.T) {
 	defer close(release)
 
 	client, metrics := newTestClient(t, srv.URL, 50*time.Millisecond)
-	_, err := client.Quote(t.Context(), 1500)
+	_, err := client.Quote(t.Context(), 1500, domain.DeliveryStandard)
 	if !errors.Is(err, ErrTimeout) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want ErrTimeout wrapping context.DeadlineExceeded, got %v", err)
 	}
@@ -119,7 +170,7 @@ func TestQuoteCallerCancellationIsNotATimeout(t *testing.T) {
 		<-started
 		cancel()
 	}()
-	_, err := client.Quote(ctx, 1500)
+	_, err := client.Quote(ctx, 1500, domain.DeliveryStandard)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("want context.Canceled, got %v", err)
 	}
@@ -161,7 +212,7 @@ func TestQuoteClassifiesResponses(t *testing.T) {
 			defer srv.Close()
 
 			client, metrics := newTestClient(sub, srv.URL, time.Second)
-			_, err := client.Quote(sub.Context(), 1500)
+			_, err := client.Quote(sub.Context(), 1500, domain.DeliveryStandard)
 			if !errors.Is(err, tc.wantErr) {
 				sub.Fatalf("Quote error = %v, want %v", err, tc.wantErr)
 			}
@@ -178,7 +229,7 @@ func TestQuoteConnectionRefusedIsUnavailable(t *testing.T) {
 	srv.Close()
 
 	client, _ := newTestClient(t, url, time.Second)
-	if _, err := client.Quote(t.Context(), 1500); !errors.Is(err, ErrUnavailable) {
+	if _, err := client.Quote(t.Context(), 1500, domain.DeliveryStandard); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("want ErrUnavailable, got %v", err)
 	}
 }

@@ -74,9 +74,28 @@ func (m Metrics) observe(o outcome, elapsed time.Duration) {
 	m.duration.Observe(elapsed.Seconds())
 }
 
-// quoteRequest is the JSON body of POST /quote.
+// quoteRequest is the JSON body of POST /quote. DeliverySpeed is always sent,
+// so the pricing service never applies its own default.
 type quoteRequest struct {
-	WeightGrams int32 `json:"weight_grams"`
+	WeightGrams   int32  `json:"weight_grams"`
+	DeliverySpeed string `json:"delivery_speed"`
+}
+
+// Wire values of delivery_speed. Keep in sync with pricing/app/pricing.py.
+const (
+	wireStandard = "standard"
+	wireExpress  = "express"
+)
+
+func wireDeliverySpeed(speed domain.DeliverySpeed) (string, error) {
+	switch speed {
+	case domain.DeliveryStandard:
+		return wireStandard, nil
+	case domain.DeliveryExpress:
+		return wireExpress, nil
+	default:
+		return "", fmt.Errorf("%w: got %d", domain.ErrInvalidDeliverySpeed, speed)
+	}
 }
 
 // quoteResponse is the JSON body returned by POST /quote. The fields are
@@ -107,18 +126,23 @@ func NewClient(baseURL string, timeout time.Duration, metrics Metrics) *Client {
 }
 
 // Quote prices a parcel. The correlation ID from ctx is forwarded as an HTTP header.
-func (c *Client) Quote(ctx context.Context, weightGrams int32) (domain.Money, error) {
+// An unsupported speed fails before the call and is not counted in the metrics.
+func (c *Client) Quote(ctx context.Context, weightGrams int32, speed domain.DeliverySpeed) (domain.Money, error) {
+	wireSpeed, err := wireDeliverySpeed(speed)
+	if err != nil {
+		return domain.Money{}, err
+	}
 	start := time.Now()
-	money, o, err := c.quote(ctx, weightGrams)
+	money, o, err := c.quote(ctx, quoteRequest{WeightGrams: weightGrams, DeliverySpeed: wireSpeed})
 	c.metrics.observe(o, time.Since(start))
 	return money, err
 }
 
-func (c *Client) quote(ctx context.Context, weightGrams int32) (domain.Money, outcome, error) {
+func (c *Client) quote(ctx context.Context, in quoteRequest) (domain.Money, outcome, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	body, err := json.Marshal(quoteRequest{WeightGrams: weightGrams})
+	body, err := json.Marshal(in)
 	if err != nil {
 		return domain.Money{}, outcomeUnavailable, err
 	}

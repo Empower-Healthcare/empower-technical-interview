@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from typing import Any, AsyncIterator
 
 from fastapi import FastAPI, Request, Response
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from prometheus_client import CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Histogram, generate_latest
 from pydantic import BaseModel, Field
@@ -101,6 +103,11 @@ class Metrics:
 
 class QuoteRequest(BaseModel):
     weight_grams: int = Field(description="Parcel weight in grams, 1..30000.")
+    # Absent means standard. Any other value, null included, fails with 422.
+    delivery_speed: pricing.DeliverySpeed = Field(
+        default=pricing.DeliverySpeed.STANDARD,
+        description="standard or express; defaults to standard.",
+    )
 
 
 class QuoteResponse(BaseModel):
@@ -137,12 +144,18 @@ def create_app(settings: Settings, metrics: Metrics, logger: logging.Logger) -> 
         )
         return JSONResponse(status_code=422, content={"detail": str(exc)})
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_body(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # Body validation fails before post_quote runs. Count it, keep FastAPI's 422 body.
+        metrics.quotes.labels(outcome="invalid").inc()
+        return await request_validation_exception_handler(request, exc)
+
     @app.post("/quote", response_model=QuoteResponse)
     async def post_quote(body: QuoteRequest, request: Request) -> QuoteResponse:
         started = time.perf_counter()
         if settings.artificial_delay_ms:
             await asyncio.sleep(settings.artificial_delay_ms / 1000)
-        money = pricing.quote(body.weight_grams)
+        money = pricing.quote(body.weight_grams, body.delivery_speed)
         metrics.quotes.labels(outcome="ok").inc()
         metrics.duration.observe(time.perf_counter() - started)
         logger.info(
@@ -151,6 +164,7 @@ def create_app(settings: Settings, metrics: Metrics, logger: logging.Logger) -> 
                 "fields": {
                     "correlation_id": request.state.correlation_id,
                     "weight_grams": body.weight_grams,
+                    "delivery_speed": body.delivery_speed.value,
                     "amount_cents": money.amount_cents,
                     "currency": money.currency,
                 }

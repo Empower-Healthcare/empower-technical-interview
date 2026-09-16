@@ -143,6 +143,9 @@ make quote WEIGHT_GRAMS=1500
 # grpcurl -plaintext -d '{"weight_grams": 1500}' 127.0.0.1:50051 parcellab.v1.ShipmentService/GetQuote
 # {"price": {"amountCents": "700", "currency": "USD"}}
 
+make quote REQUEST_JSON='{"weight_grams":1500,"delivery_speed":"DELIVERY_SPEED_EXPRESS"}'
+# {"price": {"amountCents": "1200", "currency": "USD"}}
+
 make create WEIGHT_GRAMS=1500 CORRELATION_ID=req_demo_1
 # grpcurl -plaintext -H 'x-correlation-id: req_demo_1' -d '{"weight_grams": 1500}' \
 #   127.0.0.1:50051 parcellab.v1.ShipmentService/CreateShipment
@@ -157,8 +160,17 @@ make replay EVENT_ID=evt_…            # consumer logs "duplicate event ignored
 make sql-dispatch-counts              # still exactly one dispatch per shipment
 ```
 
-Pricing rules (standard delivery): 500 cents + 100 cents per *started*
-kilogram, weight 1–30 000 g, currency USD. 1 500 g → 700 cents.
+Pricing rules: weight 1–30 000 g, currency USD.
+
+- Standard delivery: 500 cents + 100 cents per *started* kilogram.
+  1 500 g → 700 cents.
+- Express delivery: the standard price + 500 cents. 1 500 g → 1 200 cents.
+
+`delivery_speed` is optional on `GetQuote` and `CreateShipment`. Leaving it
+unset sends the proto3 zero value `DELIVERY_SPEED_UNSPECIFIED`, which is priced
+as standard. An enum number with no name (e.g. `99`) is rejected with
+`INVALID_ARGUMENT`; on `POST /quote` the pricing service takes
+`"standard"` / `"express"` (absent means standard) and answers 422 otherwise.
 
 ## Where things live
 

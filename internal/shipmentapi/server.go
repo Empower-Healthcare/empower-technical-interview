@@ -23,7 +23,7 @@ import (
 // Pricer is the downstream pricing dependency (the Python service in the
 // running stack, a fake in tests).
 type Pricer interface {
-	Quote(ctx context.Context, weightGrams int32) (domain.Money, error)
+	Quote(ctx context.Context, weightGrams int32, speed domain.DeliverySpeed) (domain.Money, error)
 }
 
 // Store is the persistence dependency.
@@ -50,7 +50,7 @@ func New(pricer Pricer, store Store, logger *slog.Logger, now func() time.Time) 
 
 // GetQuote validates the parcel and prices it via the pricing service.
 func (s *Server) GetQuote(ctx context.Context, req *parcellabv1.GetQuoteRequest) (*parcellabv1.GetQuoteResponse, error) {
-	price, err := s.quote(ctx, req.GetWeightGrams())
+	price, err := s.quote(ctx, req.GetWeightGrams(), req.GetDeliverySpeed())
 	if err != nil {
 		return nil, s.fail(ctx, err)
 	}
@@ -61,7 +61,7 @@ func (s *Server) GetQuote(ctx context.Context, req *parcellabv1.GetQuoteRequest)
 // event in one transaction. Returning does not mean the event has reached
 // Kafka; that is the relay's job.
 func (s *Server) CreateShipment(ctx context.Context, req *parcellabv1.CreateShipmentRequest) (*parcellabv1.CreateShipmentResponse, error) {
-	price, err := s.quote(ctx, req.GetWeightGrams())
+	price, err := s.quote(ctx, req.GetWeightGrams(), req.GetDeliverySpeed())
 	if err != nil {
 		return nil, s.fail(ctx, err)
 	}
@@ -107,11 +107,29 @@ func (s *Server) GetShipment(ctx context.Context, req *parcellabv1.GetShipmentRe
 }
 
 // quote validates locally before spending a downstream call.
-func (s *Server) quote(ctx context.Context, weightGrams int32) (domain.Money, error) {
+func (s *Server) quote(ctx context.Context, weightGrams int32, protoSpeed parcellabv1.DeliverySpeed) (domain.Money, error) {
 	if err := domain.ValidateWeight(weightGrams); err != nil {
 		return domain.Money{}, err
 	}
-	return s.pricer.Quote(ctx, weightGrams)
+	speed, err := fromProtoDeliverySpeed(protoSpeed)
+	if err != nil {
+		return domain.Money{}, err
+	}
+	return s.pricer.Quote(ctx, weightGrams, speed)
+}
+
+// fromProtoDeliverySpeed maps the proto enum to the domain speed.
+// UNSPECIFIED (0) is the value of an unset field, so it is standard.
+// proto3 enums are open, so an unnamed number (for example 99) is rejected.
+func fromProtoDeliverySpeed(v parcellabv1.DeliverySpeed) (domain.DeliverySpeed, error) {
+	switch v {
+	case parcellabv1.DeliverySpeed_DELIVERY_SPEED_UNSPECIFIED, parcellabv1.DeliverySpeed_DELIVERY_SPEED_STANDARD:
+		return domain.DeliveryStandard, nil
+	case parcellabv1.DeliverySpeed_DELIVERY_SPEED_EXPRESS:
+		return domain.DeliveryExpress, nil
+	default:
+		return 0, fmt.Errorf("%w: got %d", domain.ErrInvalidDeliverySpeed, int32(v))
+	}
 }
 
 // newOutboxEvent builds the shipment.created event and its outbox row.
@@ -151,7 +169,7 @@ func toStatus(err error) error {
 		return err
 	}
 	switch {
-	case errors.Is(err, domain.ErrInvalidWeight), errors.Is(err, pricing.ErrRejected):
+	case errors.Is(err, domain.ErrInvalidWeight), errors.Is(err, domain.ErrInvalidDeliverySpeed), errors.Is(err, pricing.ErrRejected):
 		return status.Error(codes.InvalidArgument, err.Error())
 	case errors.Is(err, domain.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())

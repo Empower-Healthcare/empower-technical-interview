@@ -4,13 +4,22 @@ All rules are fictional and exist only for this exercise.
 """
 
 from dataclasses import dataclass
+from enum import Enum
 
 MIN_WEIGHT_GRAMS = 1
 MAX_WEIGHT_GRAMS = 30_000
 
 BASE_CENTS = 500
 PER_STARTED_KG_CENTS = 100
+EXPRESS_SURCHARGE_CENTS = 500
 CURRENCY = "USD"
+
+
+class DeliverySpeed(str, Enum):
+    """Wire values of delivery_speed. Keep in sync with internal/pricing/client.go."""
+
+    STANDARD = "standard"
+    EXPRESS = "express"
 
 
 class InvalidWeight(ValueError):
@@ -36,13 +45,14 @@ def started_kilograms(weight_grams: int) -> int:
     return -(-weight_grams // 1000)
 
 
-def quote(weight_grams: int) -> Money:
+def quote(weight_grams: int, speed: DeliverySpeed) -> Money:
     """Standard delivery: 500 cents plus 100 cents per started kilogram.
+    Express delivery: standard price plus 500 cents.
 
-    Example: 1,500 g -> 500 + 2 * 100 = 700 cents.
+    Example: 1,500 g -> 500 + 2 * 100 = 700 cents, or 1,200 cents express.
     """
     validate_weight(weight_grams)
-    return Money(
-        amount_cents=BASE_CENTS + PER_STARTED_KG_CENTS * started_kilograms(weight_grams),
-        currency=CURRENCY,
-    )
+    amount_cents = BASE_CENTS + PER_STARTED_KG_CENTS * started_kilograms(weight_grams)
+    if speed is DeliverySpeed.EXPRESS:
+        amount_cents += EXPRESS_SURCHARGE_CENTS
+    return Money(amount_cents=amount_cents, currency=CURRENCY)

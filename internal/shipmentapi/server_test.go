@@ -25,13 +25,15 @@ func fixedNow() time.Time { return time.Date(2026, 9, 15, 16, 0, 0, 0, time.UTC)
 func usd700() domain.Money { return domain.Money{AmountCents: 700, Currency: "USD"} }
 
 type fakePricer struct {
-	money domain.Money
-	err   error
-	calls int
+	money     domain.Money
+	err       error
+	calls     int
+	lastSpeed domain.DeliverySpeed
 }
 
-func (f *fakePricer) Quote(context.Context, int32) (domain.Money, error) {
+func (f *fakePricer) Quote(_ context.Context, _ int32, speed domain.DeliverySpeed) (domain.Money, error) {
 	f.calls++
+	f.lastSpeed = speed
 	return f.money, f.err
 }
 
@@ -114,6 +116,66 @@ func TestInvalidWeightIsRejectedBeforePricing(t *testing.T) {
 	}
 }
 
+// TestDeliverySpeedMapping: an unset field (proto3 zero value) is priced as standard.
+func TestDeliverySpeedMapping(t *testing.T) {
+	cases := []struct {
+		name  string
+		speed parcellabv1.DeliverySpeed
+		want  domain.DeliverySpeed
+	}{
+		{name: "unset (zero value) is standard", speed: parcellabv1.DeliverySpeed_DELIVERY_SPEED_UNSPECIFIED, want: domain.DeliveryStandard},
+		{name: "standard", speed: parcellabv1.DeliverySpeed_DELIVERY_SPEED_STANDARD, want: domain.DeliveryStandard},
+		{name: "express", speed: parcellabv1.DeliverySpeed_DELIVERY_SPEED_EXPRESS, want: domain.DeliveryExpress},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(sub *testing.T) {
+			pricer := &fakePricer{money: usd700()}
+			srv := newTestServer(pricer, newFakeStore())
+
+			if _, err := srv.GetQuote(sub.Context(), &parcellabv1.GetQuoteRequest{WeightGrams: 1500, DeliverySpeed: tc.speed}); err != nil {
+				sub.Fatal(err)
+			}
+			if pricer.lastSpeed != tc.want {
+				sub.Fatalf("GetQuote priced speed %d, want %d", pricer.lastSpeed, tc.want)
+			}
+
+			pricer.lastSpeed = 0
+			if _, err := srv.CreateShipment(sub.Context(), &parcellabv1.CreateShipmentRequest{WeightGrams: 1500, DeliverySpeed: tc.speed}); err != nil {
+				sub.Fatal(err)
+			}
+			if pricer.lastSpeed != tc.want {
+				sub.Fatalf("CreateShipment priced speed %d, want %d", pricer.lastSpeed, tc.want)
+			}
+		})
+	}
+}
+
+// TestUnsupportedDeliverySpeedIsRejectedBeforePricing: proto3 enums are open, so
+// an unnamed number can arrive. It fails like a bad weight: no call, no row.
+func TestUnsupportedDeliverySpeedIsRejectedBeforePricing(t *testing.T) {
+	for _, speed := range []parcellabv1.DeliverySpeed{3, 99, -1} {
+		t.Run(speed.String(), func(sub *testing.T) {
+			pricer := &fakePricer{money: usd700()}
+			store := newFakeStore()
+			srv := newTestServer(pricer, store)
+
+			_, quoteErr := srv.GetQuote(sub.Context(), &parcellabv1.GetQuoteRequest{WeightGrams: 1500, DeliverySpeed: speed})
+			_, createErr := srv.CreateShipment(sub.Context(), &parcellabv1.CreateShipmentRequest{WeightGrams: 1500, DeliverySpeed: speed})
+			for _, err := range []error{quoteErr, createErr} {
+				if status.Code(err) != codes.InvalidArgument {
+					sub.Fatalf("want InvalidArgument, got %v", err)
+				}
+			}
+			if pricer.calls != 0 {
+				sub.Fatalf("pricing must not be called for an unsupported speed, got %d calls", pricer.calls)
+			}
+			if len(store.outbox) != 0 {
+				sub.Fatalf("nothing may be stored for an unsupported speed")
+			}
+		})
+	}
+}
+
 func TestToStatus(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -122,6 +184,7 @@ func TestToStatus(t *testing.T) {
 		wantMsg  string // "" means "do not check"
 	}{
 		{name: "invalid weight", err: domain.ValidateWeight(0), wantCode: codes.InvalidArgument},
+		{name: "invalid delivery speed", err: domain.ErrInvalidDeliverySpeed, wantCode: codes.InvalidArgument},
 		{name: "not found", err: domain.ErrNotFound, wantCode: codes.NotFound},
 		{name: "pricing rejected", err: pricing.ErrRejected, wantCode: codes.InvalidArgument},
 		{name: "pricing unavailable", err: pricing.ErrUnavailable, wantCode: codes.Unavailable},
@@ -191,6 +254,34 @@ func TestCreateShipmentStoresShipmentAndEventTogether(t *testing.T) {
 	}
 	if payload != want {
 		t.Fatalf("payload mismatch:\n got %+v\nwant %+v", payload, want)
+	}
+}
+
+// TestCreateShipmentExpressStoresExpressPrice: amount_cents already carries the
+// surcharge, so no new column or event field is needed.
+func TestCreateShipmentExpressStoresExpressPrice(t *testing.T) {
+	store := newFakeStore()
+	srv := newTestServer(&fakePricer{money: domain.Money{AmountCents: 1200, Currency: "USD"}}, store)
+
+	resp, err := srv.CreateShipment(t.Context(), &parcellabv1.CreateShipmentRequest{
+		WeightGrams:   1500,
+		DeliverySpeed: parcellabv1.DeliverySpeed_DELIVERY_SPEED_EXPRESS,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resp.GetShipment().GetPrice().GetAmountCents(); got != 1200 {
+		t.Fatalf("response amount_cents = %d, want 1200", got)
+	}
+	if got := store.shipments[domain.ShipmentID(resp.GetShipment().GetShipmentId())].Shipment.Price.AmountCents; got != 1200 {
+		t.Fatalf("stored amount_cents = %d, want 1200", got)
+	}
+	payload, err := events.Decode(store.outbox[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload.Data.AmountCents != 1200 {
+		t.Fatalf("event amount_cents = %d, want 1200", payload.Data.AmountCents)
 	}
 }
 

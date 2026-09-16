@@ -39,6 +39,8 @@ service ShipmentService {
 message GetQuoteRequest {
   // Parcel weight in grams. Must be between 1 and 30000 inclusive.
   int32 weight_grams = 1;
+  // Optional. Unset means standard.
+  DeliverySpeed delivery_speed = 2;
 }
 
 message GetQuoteResponse {
@@ -48,6 +50,20 @@ message GetQuoteResponse {
 message CreateShipmentRequest {
   // Parcel weight in grams. Must be between 1 and 30000 inclusive.
   int32 weight_grams = 1;
+  // Optional. Unset means standard.
+  DeliverySpeed delivery_speed = 2;
+}
+
+// DeliverySpeed selects the pricing rule.
+// An unset field reads as UNSPECIFIED (0) and is priced as STANDARD, so older
+// clients see no change. Any other value fails with INVALID_ARGUMENT.
+enum DeliverySpeed {
+  // Unset. Priced as STANDARD.
+  DELIVERY_SPEED_UNSPECIFIED = 0;
+  // 500 cents plus 100 cents per started kilogram.
+  DELIVERY_SPEED_STANDARD = 1;
+  // Standard price plus 500 cents.
+  DELIVERY_SPEED_EXPRESS = 2;
 }
 
 message CreateShipmentResponse {
