@@ -30,6 +30,61 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// DeliverySpeed selects the pricing rule.
+// An unset field reads as UNSPECIFIED (0) and is priced as STANDARD, so older
+// clients see no change. Any other value fails with INVALID_ARGUMENT.
+type DeliverySpeed int32
+
+const (
+	// Unset. Priced as STANDARD.
+	DeliverySpeed_DELIVERY_SPEED_UNSPECIFIED DeliverySpeed = 0
+	// 500 cents plus 100 cents per started kilogram.
+	DeliverySpeed_DELIVERY_SPEED_STANDARD DeliverySpeed = 1
+	// Standard price plus 500 cents.
+	DeliverySpeed_DELIVERY_SPEED_EXPRESS DeliverySpeed = 2
+)
+
+// Enum value maps for DeliverySpeed.
+var (
+	DeliverySpeed_name = map[int32]string{
+		0: "DELIVERY_SPEED_UNSPECIFIED",
+		1: "DELIVERY_SPEED_STANDARD",
+		2: "DELIVERY_SPEED_EXPRESS",
+	}
+	DeliverySpeed_value = map[string]int32{
+		"DELIVERY_SPEED_UNSPECIFIED": 0,
+		"DELIVERY_SPEED_STANDARD":    1,
+		"DELIVERY_SPEED_EXPRESS":     2,
+	}
+)
+
+func (x DeliverySpeed) Enum() *DeliverySpeed {
+	p := new(DeliverySpeed)
+	*p = x
+	return p
+}
+
+func (x DeliverySpeed) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DeliverySpeed) Descriptor() protoreflect.EnumDescriptor {
+	return file_parcellab_v1_shipment_proto_enumTypes[0].Descriptor()
+}
+
+func (DeliverySpeed) Type() protoreflect.EnumType {
+	return &file_parcellab_v1_shipment_proto_enumTypes[0]
+}
+
+func (x DeliverySpeed) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DeliverySpeed.Descriptor instead.
+func (DeliverySpeed) EnumDescriptor() ([]byte, []int) {
+	return file_parcellab_v1_shipment_proto_rawDescGZIP(), []int{0}
+}
+
 type OutboxStatus int32
 
 const (
@@ -65,11 +120,11 @@ func (x OutboxStatus) String() string {
 }
 
 func (OutboxStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_parcellab_v1_shipment_proto_enumTypes[0].Descriptor()
+	return file_parcellab_v1_shipment_proto_enumTypes[1].Descriptor()
 }
 
 func (OutboxStatus) Type() protoreflect.EnumType {
-	return &file_parcellab_v1_shipment_proto_enumTypes[0]
+	return &file_parcellab_v1_shipment_proto_enumTypes[1]
 }
 
 func (x OutboxStatus) Number() protoreflect.EnumNumber {
@@ -78,7 +133,7 @@ func (x OutboxStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use OutboxStatus.Descriptor instead.
 func (OutboxStatus) EnumDescriptor() ([]byte, []int) {
-	return file_parcellab_v1_shipment_proto_rawDescGZIP(), []int{0}
+	return file_parcellab_v1_shipment_proto_rawDescGZIP(), []int{1}
 }
 
 type DispatchStatus int32
@@ -116,11 +171,11 @@ func (x DispatchStatus) String() string {
 }
 
 func (DispatchStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_parcellab_v1_shipment_proto_enumTypes[1].Descriptor()
+	return file_parcellab_v1_shipment_proto_enumTypes[2].Descriptor()
 }
 
 func (DispatchStatus) Type() protoreflect.EnumType {
-	return &file_parcellab_v1_shipment_proto_enumTypes[1]
+	return &file_parcellab_v1_shipment_proto_enumTypes[2]
 }
 
 func (x DispatchStatus) Number() protoreflect.EnumNumber {
@@ -129,13 +184,15 @@ func (x DispatchStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use DispatchStatus.Descriptor instead.
 func (DispatchStatus) EnumDescriptor() ([]byte, []int) {
-	return file_parcellab_v1_shipment_proto_rawDescGZIP(), []int{1}
+	return file_parcellab_v1_shipment_proto_rawDescGZIP(), []int{2}
 }
 
 type GetQuoteRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Parcel weight in grams. Must be between 1 and 30000 inclusive.
-	WeightGrams   int32 `protobuf:"varint,1,opt,name=weight_grams,json=weightGrams,proto3" json:"weight_grams,omitempty"`
+	WeightGrams int32 `protobuf:"varint,1,opt,name=weight_grams,json=weightGrams,proto3" json:"weight_grams,omitempty"`
+	// Optional. Unset means standard.
+	DeliverySpeed DeliverySpeed `protobuf:"varint,2,opt,name=delivery_speed,json=deliverySpeed,proto3,enum=parcellab.v1.DeliverySpeed" json:"delivery_speed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -175,6 +232,13 @@ func (x *GetQuoteRequest) GetWeightGrams() int32 {
 		return x.WeightGrams
 	}
 	return 0
+}
+
+func (x *GetQuoteRequest) GetDeliverySpeed() DeliverySpeed {
+	if x != nil {
+		return x.DeliverySpeed
+	}
+	return DeliverySpeed_DELIVERY_SPEED_UNSPECIFIED
 }
 
 type GetQuoteResponse struct {
@@ -224,7 +288,9 @@ func (x *GetQuoteResponse) GetPrice() *Money {
 type CreateShipmentRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Parcel weight in grams. Must be between 1 and 30000 inclusive.
-	WeightGrams   int32 `protobuf:"varint,1,opt,name=weight_grams,json=weightGrams,proto3" json:"weight_grams,omitempty"`
+	WeightGrams int32 `protobuf:"varint,1,opt,name=weight_grams,json=weightGrams,proto3" json:"weight_grams,omitempty"`
+	// Optional. Unset means standard.
+	DeliverySpeed DeliverySpeed `protobuf:"varint,2,opt,name=delivery_speed,json=deliverySpeed,proto3,enum=parcellab.v1.DeliverySpeed" json:"delivery_speed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -264,6 +330,13 @@ func (x *CreateShipmentRequest) GetWeightGrams() int32 {
 		return x.WeightGrams
 	}
 	return 0
+}
+
+func (x *CreateShipmentRequest) GetDeliverySpeed() DeliverySpeed {
+	if x != nil {
+		return x.DeliverySpeed
+	}
+	return DeliverySpeed_DELIVERY_SPEED_UNSPECIFIED
 }
 
 type CreateShipmentResponse struct {
@@ -612,13 +685,15 @@ var File_parcellab_v1_shipment_proto protoreflect.FileDescriptor
 
 const file_parcellab_v1_shipment_proto_rawDesc = "" +
 	"\n" +
-	"\x1bparcellab/v1/shipment.proto\x12\fparcellab.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"4\n" +
+	"\x1bparcellab/v1/shipment.proto\x12\fparcellab.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"x\n" +
 	"\x0fGetQuoteRequest\x12!\n" +
-	"\fweight_grams\x18\x01 \x01(\x05R\vweightGrams\"=\n" +
+	"\fweight_grams\x18\x01 \x01(\x05R\vweightGrams\x12B\n" +
+	"\x0edelivery_speed\x18\x02 \x01(\x0e2\x1b.parcellab.v1.DeliverySpeedR\rdeliverySpeed\"=\n" +
 	"\x10GetQuoteResponse\x12)\n" +
-	"\x05price\x18\x01 \x01(\v2\x13.parcellab.v1.MoneyR\x05price\":\n" +
+	"\x05price\x18\x01 \x01(\v2\x13.parcellab.v1.MoneyR\x05price\"~\n" +
 	"\x15CreateShipmentRequest\x12!\n" +
-	"\fweight_grams\x18\x01 \x01(\x05R\vweightGrams\"L\n" +
+	"\fweight_grams\x18\x01 \x01(\x05R\vweightGrams\x12B\n" +
+	"\x0edelivery_speed\x18\x02 \x01(\x0e2\x1b.parcellab.v1.DeliverySpeedR\rdeliverySpeed\"L\n" +
 	"\x16CreateShipmentResponse\x122\n" +
 	"\bshipment\x18\x01 \x01(\v2\x16.parcellab.v1.ShipmentR\bshipment\"5\n" +
 	"\x12GetShipmentRequest\x12\x1f\n" +
@@ -643,7 +718,11 @@ const file_parcellab_v1_shipment_proto_rawDesc = "" +
 	"\vdispatch_id\x18\x02 \x01(\tR\n" +
 	"dispatchId\x12?\n" +
 	"\rdispatched_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\fdispatchedAt\x12\x19\n" +
-	"\bevent_id\x18\x04 \x01(\tR\aeventId*e\n" +
+	"\bevent_id\x18\x04 \x01(\tR\aeventId*h\n" +
+	"\rDeliverySpeed\x12\x1e\n" +
+	"\x1aDELIVERY_SPEED_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17DELIVERY_SPEED_STANDARD\x10\x01\x12\x1a\n" +
+	"\x16DELIVERY_SPEED_EXPRESS\x10\x02*e\n" +
 	"\fOutboxStatus\x12\x1d\n" +
 	"\x19OUTBOX_STATUS_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15OUTBOX_STATUS_PENDING\x10\x01\x12\x1b\n" +
@@ -669,43 +748,46 @@ func file_parcellab_v1_shipment_proto_rawDescGZIP() []byte {
 	return file_parcellab_v1_shipment_proto_rawDescData
 }
 
-var file_parcellab_v1_shipment_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_parcellab_v1_shipment_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
 var file_parcellab_v1_shipment_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_parcellab_v1_shipment_proto_goTypes = []any{
-	(OutboxStatus)(0),              // 0: parcellab.v1.OutboxStatus
-	(DispatchStatus)(0),            // 1: parcellab.v1.DispatchStatus
-	(*GetQuoteRequest)(nil),        // 2: parcellab.v1.GetQuoteRequest
-	(*GetQuoteResponse)(nil),       // 3: parcellab.v1.GetQuoteResponse
-	(*CreateShipmentRequest)(nil),  // 4: parcellab.v1.CreateShipmentRequest
-	(*CreateShipmentResponse)(nil), // 5: parcellab.v1.CreateShipmentResponse
-	(*GetShipmentRequest)(nil),     // 6: parcellab.v1.GetShipmentRequest
-	(*GetShipmentResponse)(nil),    // 7: parcellab.v1.GetShipmentResponse
-	(*Money)(nil),                  // 8: parcellab.v1.Money
-	(*Shipment)(nil),               // 9: parcellab.v1.Shipment
-	(*Dispatch)(nil),               // 10: parcellab.v1.Dispatch
-	(*timestamppb.Timestamp)(nil),  // 11: google.protobuf.Timestamp
+	(DeliverySpeed)(0),             // 0: parcellab.v1.DeliverySpeed
+	(OutboxStatus)(0),              // 1: parcellab.v1.OutboxStatus
+	(DispatchStatus)(0),            // 2: parcellab.v1.DispatchStatus
+	(*GetQuoteRequest)(nil),        // 3: parcellab.v1.GetQuoteRequest
+	(*GetQuoteResponse)(nil),       // 4: parcellab.v1.GetQuoteResponse
+	(*CreateShipmentRequest)(nil),  // 5: parcellab.v1.CreateShipmentRequest
+	(*CreateShipmentResponse)(nil), // 6: parcellab.v1.CreateShipmentResponse
+	(*GetShipmentRequest)(nil),     // 7: parcellab.v1.GetShipmentRequest
+	(*GetShipmentResponse)(nil),    // 8: parcellab.v1.GetShipmentResponse
+	(*Money)(nil),                  // 9: parcellab.v1.Money
+	(*Shipment)(nil),               // 10: parcellab.v1.Shipment
+	(*Dispatch)(nil),               // 11: parcellab.v1.Dispatch
+	(*timestamppb.Timestamp)(nil),  // 12: google.protobuf.Timestamp
 }
 var file_parcellab_v1_shipment_proto_depIdxs = []int32{
-	8,  // 0: parcellab.v1.GetQuoteResponse.price:type_name -> parcellab.v1.Money
-	9,  // 1: parcellab.v1.CreateShipmentResponse.shipment:type_name -> parcellab.v1.Shipment
-	9,  // 2: parcellab.v1.GetShipmentResponse.shipment:type_name -> parcellab.v1.Shipment
-	8,  // 3: parcellab.v1.Shipment.price:type_name -> parcellab.v1.Money
-	11, // 4: parcellab.v1.Shipment.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 5: parcellab.v1.Shipment.outbox_status:type_name -> parcellab.v1.OutboxStatus
-	10, // 6: parcellab.v1.Shipment.dispatch:type_name -> parcellab.v1.Dispatch
-	1,  // 7: parcellab.v1.Dispatch.status:type_name -> parcellab.v1.DispatchStatus
-	11, // 8: parcellab.v1.Dispatch.dispatched_at:type_name -> google.protobuf.Timestamp
-	2,  // 9: parcellab.v1.ShipmentService.GetQuote:input_type -> parcellab.v1.GetQuoteRequest
-	4,  // 10: parcellab.v1.ShipmentService.CreateShipment:input_type -> parcellab.v1.CreateShipmentRequest
-	6,  // 11: parcellab.v1.ShipmentService.GetShipment:input_type -> parcellab.v1.GetShipmentRequest
-	3,  // 12: parcellab.v1.ShipmentService.GetQuote:output_type -> parcellab.v1.GetQuoteResponse
-	5,  // 13: parcellab.v1.ShipmentService.CreateShipment:output_type -> parcellab.v1.CreateShipmentResponse
-	7,  // 14: parcellab.v1.ShipmentService.GetShipment:output_type -> parcellab.v1.GetShipmentResponse
-	12, // [12:15] is the sub-list for method output_type
-	9,  // [9:12] is the sub-list for method input_type
-	9,  // [9:9] is the sub-list for extension type_name
-	9,  // [9:9] is the sub-list for extension extendee
-	0,  // [0:9] is the sub-list for field type_name
+	0,  // 0: parcellab.v1.GetQuoteRequest.delivery_speed:type_name -> parcellab.v1.DeliverySpeed
+	9,  // 1: parcellab.v1.GetQuoteResponse.price:type_name -> parcellab.v1.Money
+	0,  // 2: parcellab.v1.CreateShipmentRequest.delivery_speed:type_name -> parcellab.v1.DeliverySpeed
+	10, // 3: parcellab.v1.CreateShipmentResponse.shipment:type_name -> parcellab.v1.Shipment
+	10, // 4: parcellab.v1.GetShipmentResponse.shipment:type_name -> parcellab.v1.Shipment
+	9,  // 5: parcellab.v1.Shipment.price:type_name -> parcellab.v1.Money
+	12, // 6: parcellab.v1.Shipment.created_at:type_name -> google.protobuf.Timestamp
+	1,  // 7: parcellab.v1.Shipment.outbox_status:type_name -> parcellab.v1.OutboxStatus
+	11, // 8: parcellab.v1.Shipment.dispatch:type_name -> parcellab.v1.Dispatch
+	2,  // 9: parcellab.v1.Dispatch.status:type_name -> parcellab.v1.DispatchStatus
+	12, // 10: parcellab.v1.Dispatch.dispatched_at:type_name -> google.protobuf.Timestamp
+	3,  // 11: parcellab.v1.ShipmentService.GetQuote:input_type -> parcellab.v1.GetQuoteRequest
+	5,  // 12: parcellab.v1.ShipmentService.CreateShipment:input_type -> parcellab.v1.CreateShipmentRequest
+	7,  // 13: parcellab.v1.ShipmentService.GetShipment:input_type -> parcellab.v1.GetShipmentRequest
+	4,  // 14: parcellab.v1.ShipmentService.GetQuote:output_type -> parcellab.v1.GetQuoteResponse
+	6,  // 15: parcellab.v1.ShipmentService.CreateShipment:output_type -> parcellab.v1.CreateShipmentResponse
+	8,  // 16: parcellab.v1.ShipmentService.GetShipment:output_type -> parcellab.v1.GetShipmentResponse
+	14, // [14:17] is the sub-list for method output_type
+	11, // [11:14] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_parcellab_v1_shipment_proto_init() }
@@ -718,7 +800,7 @@ func file_parcellab_v1_shipment_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_parcellab_v1_shipment_proto_rawDesc), len(file_parcellab_v1_shipment_proto_rawDesc)),
-			NumEnums:      2,
+			NumEnums:      3,
 			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,

@@ -21,6 +21,30 @@ def test_quote_returns_integer_cents_and_currency(client: TestClient) -> None:
     assert resp.headers["X-Correlation-ID"] == "req_test_1"
 
 
+@pytest.mark.parametrize(
+    ("body", "expected_cents"),
+    [
+        ({"weight_grams": 1500}, 700),  # field absent: standard, unchanged behaviour
+        ({"weight_grams": 1500, "delivery_speed": "standard"}, 700),
+        ({"weight_grams": 1500, "delivery_speed": "express"}, 1200),
+    ],
+)
+def test_quote_prices_delivery_speed(client: TestClient, body: dict, expected_cents: int) -> None:
+    resp = client.post("/quote", json=body)
+    assert resp.status_code == 200
+    assert resp.json() == {"amount_cents": expected_cents, "currency": "USD"}
+
+
+@pytest.mark.parametrize(
+    "delivery_speed",
+    ["overnight", "EXPRESS", "DELIVERY_SPEED_EXPRESS", "", None, 2],
+)
+def test_unsupported_delivery_speed_is_422(client: TestClient, delivery_speed: object) -> None:
+    resp = client.post("/quote", json={"weight_grams": 1500, "delivery_speed": delivery_speed})
+    assert resp.status_code == 422
+    assert any(err["loc"] == ["body", "delivery_speed"] for err in resp.json()["detail"])
+
+
 def test_quote_generates_correlation_id_when_missing(client: TestClient) -> None:
     resp = client.post("/quote", json={"weight_grams": 1})
     assert resp.status_code == 200

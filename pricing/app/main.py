@@ -101,6 +101,11 @@ class Metrics:
 
 class QuoteRequest(BaseModel):
     weight_grams: int = Field(description="Parcel weight in grams, 1..30000.")
+    # Absent means standard. Any other value, null included, fails with 422.
+    delivery_speed: pricing.DeliverySpeed = Field(
+        default=pricing.DeliverySpeed.STANDARD,
+        description="standard or express; defaults to standard.",
+    )
 
 
 class QuoteResponse(BaseModel):
@@ -142,7 +147,7 @@ def create_app(settings: Settings, metrics: Metrics, logger: logging.Logger) -> 
         started = time.perf_counter()
         if settings.artificial_delay_ms:
             await asyncio.sleep(settings.artificial_delay_ms / 1000)
-        money = pricing.quote(body.weight_grams)
+        money = pricing.quote(body.weight_grams, body.delivery_speed)
         metrics.quotes.labels(outcome="ok").inc()
         metrics.duration.observe(time.perf_counter() - started)
         logger.info(
@@ -151,6 +156,7 @@ def create_app(settings: Settings, metrics: Metrics, logger: logging.Logger) -> 
                 "fields": {
                     "correlation_id": request.state.correlation_id,
                     "weight_grams": body.weight_grams,
+                    "delivery_speed": body.delivery_speed.value,
                     "amount_cents": money.amount_cents,
                     "currency": money.currency,
                 }
