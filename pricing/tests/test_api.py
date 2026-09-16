@@ -71,6 +71,12 @@ def test_metrics_count_outcomes(client: TestClient) -> None:
     assert 'pricing_quotes_total{outcome="invalid"} 1.0' in text
 
 
+def test_body_validation_errors_count_as_invalid(client: TestClient) -> None:
+    client.post("/quote", json={"weight_grams": 1500, "delivery_speed": "overnight"})
+    client.post("/quote", json={"weight_grams": "heavy"})
+    assert 'pricing_quotes_total{outcome="invalid"} 2.0' in client.get("/metrics").text
+
+
 def test_healthz(client: TestClient) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
 
